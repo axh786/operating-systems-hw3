@@ -14,16 +14,69 @@ COSC 3360: Programming Assignment 3
 #include <sstream>
 
 struct lines { // defining lines struct from data given by input
-    std::vector<std::pair<char, std::vector<std::pair<int, int> > > >& ranges;
-    std::vector<int> headPos;
-    std::vector<int>& dataPos;
+    std::vector<std::pair<char, std::vector<std::pair<int, int> > > > ranges;
+    int headPos[2];
+    std::vector<int> dataPos;
     int index;
     char** outputMatrix; // make changes to matrix when done with figuring out character placement
+
+    int *turn;
+    pthread_mutex_t *mutex;
+    pthread_mutex_t *mutex2;
+    pthread_cond_t *condition;
 };
 
-void * asciiArt(void *void_ptr);
+void * charArt(void *arg) { // thread function, based off of Dr. Rincons threading practices
+    lines imageLine = (*(lines *)arg);
+    std::vector<std::pair<char, std::vector<std::pair<int, int> > > > ranges = imageLine.ranges;
+    int headPos[2] = {imageLine.headPos[0], imageLine.headPos[1]};
+    std::vector<int> dataPos = imageLine.dataPos;
+    int index = imageLine.index;
+    char** outputMatrix = imageLine.outputMatrix;
+    pthread_mutex_unlock(imageLine.mutex2);
+ 
+    for (int i = headPos[0]; i < headPos[1]; i++) { // loops through the range
+         int data = dataPos[i];
+         for (int j = 0; j < ranges.size(); j++) {
+             char character = ranges[j].first;
+             const std::vector<std::pair<int, int> >& inner_ranges = ranges[j].second;
+             for (int k = 0; k < inner_ranges.size(); k++) {
+                 int start = inner_ranges[k].first; // gets the ranges from the nested vector pair
+                 int end = inner_ranges[k].second;
+                 if (data >= start && data <= end) { // checks to see if data falls in range if true adds char to the matrix
+                     outputMatrix[index][data] = character;
+                     break;
+                 }
+                 
+             }
+         }
+    }
+    
+    
+    pthread_mutex_lock(imageLine.mutex);
+    while (*imageLine.turn != imageLine.index) {
+        pthread_cond_wait(imageLine.condition, imageLine.mutex);
+    }
+    pthread_mutex_unlock(imageLine.mutex);
+    
+    std::cout<< outputMatrix[index] << std::endl;
+    
+    pthread_mutex_lock(imageLine.mutex);
+    (*imageLine.turn)+=1;
+    pthread_cond_broadcast(imageLine.condition);
+    pthread_mutex_unlock(imageLine.mutex);
+
+    return NULL;
+ }
 
 int main() {
+    pthread_mutex_t mutex;
+    pthread_mutex_t mutex2;
+    pthread_cond_t condition = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_init(&mutex, NULL);
+    pthread_mutex_init(&mutex2, NULL);
+    static int turn = 0;
+
     int col, row; // reading matrix size from first line
     std::cin >> col >> row;
     std::cin.ignore();
@@ -64,25 +117,24 @@ int main() {
     while (dataStream >> value) {
         dataPos.push_back(value); // data pos values stored in vector
     }
-    
-    std::vector<lines> arg; // storing thread in lines vector, each contains refrences to dataPos, and the matrix while having its unique index + head pos
-    arg.reserve(row);
-    for (int i = 0; i < row; i++) {
-        lines args = {ranges, std::vector<int>(), dataPos, i, outputMatrix};
-        if (i == row - 1) { // if statment that essentially checks if its the last index, when true the range starts off on the last head pos to the last element of dataPos
-            args.headPos.push_back(headPos[i]);
-            args.headPos.push_back((int)dataPos.size());
-        }
-        else { 
-            args.headPos.push_back(headPos[i]);
-            args.headPos.push_back(headPos[i+1]);
-        }
-        arg.push_back(args);
-    }
 
     pthread_t *tid = new pthread_t[row]; // dynamic array of pthread_t of size of the image height (rows), based off of Dr. Rincon's threading practices
+    lines imageLine;
+    imageLine.turn = &turn;
+    imageLine.mutex = &mutex;
+    imageLine.mutex2 = &mutex2;
+    imageLine.condition = &condition;
     for (int i = 0; i < row; i++) { // for loop that iterates through the lines in the image (amount of rows)
-        if(pthread_create(&tid[i],nullptr,asciiArt,(void *) &arg.at(i))!= 0) {
+        // lock mutex in here and initiliaze input in here
+        pthread_mutex_lock(&mutex2);
+        imageLine.ranges = ranges; // put ranges in each member
+        imageLine.headPos[0] = headPos[i]; // filling in head pos
+        if (i == row - 1) {imageLine.headPos[1]= dataPos.size();} // if that checks if last section, if it is set end to size of data pos
+        else {imageLine.headPos[1] = headPos[i+1];}
+        imageLine.dataPos = dataPos; // set to dataPosition
+        imageLine.index = i;
+        imageLine.outputMatrix = outputMatrix;
+        if(pthread_create(&tid[i],nullptr,charArt,(void *) &imageLine)) {
 			std::cerr << "Error creating thread" << std::endl;
 			return 1;
 		}
@@ -90,13 +142,6 @@ int main() {
 
     for (int j = 0; j < row; j++) { // Waits for other threads to finish then call pthread_join 
         pthread_join(tid[j],nullptr);
-    }
-
-    for (int r = 0; r < row; r++) { // printing out the matrix 
-        for (int c = 0; c < col; c++) {
-            std::cout << outputMatrix[r][c];
-        }
-        std::cout << std::endl;
     }
 
     for (int r = 0; r < row; ++r) { // deallocating memory
@@ -107,30 +152,3 @@ int main() {
 
     return 0;
 }
-
-void * asciiArt(void *void_ptr) { // thread function, based off of Dr. Rincons threading practices
-    lines *ptr = (lines *) void_ptr;
-    std::vector<std::pair<char, std::vector<std::pair<int, int> > > >& ranges = ptr->ranges;
-    std::vector<int>& dataPos = ptr->dataPos;
-    int index = ptr->index;
-    char** outputMatrix = ptr->outputMatrix;
- 
-    for (int i = ptr->headPos[0]; i < ptr->headPos[1]; i++) { // loops through the range
-         int data = ptr->dataPos[i];
-         for (int j = 0; j < ranges.size(); j++) {
-             char character = ranges[j].first;
-             const std::vector<std::pair<int, int> >& inner_ranges = ranges[j].second;
-             for (int k = 0; k < inner_ranges.size(); k++) {
-                 int start = inner_ranges[k].first; // gets the ranges from the nested vector pair
-                 int end = inner_ranges[k].second;
-                 if (data >= start && data <= end) { // checks to see if data falls in range if true adds char to the matrix
-                     outputMatrix[index][data] = character;
-                     break;
-                 }
-                 
-             }
-         }
-    }
- 
-    return NULL;
- }
