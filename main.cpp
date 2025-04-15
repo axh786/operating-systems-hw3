@@ -15,66 +15,65 @@ COSC 3360: Programming Assignment 3
 
 struct lines { // defining lines struct from data given by input
     std::vector<std::pair<char, std::vector<std::pair<int, int> > > > ranges;
-    int headPos[2];
+    int headPos[2]; 
     std::vector<int> dataPos;
     int index;
     char** outputMatrix; // make changes to matrix when done with figuring out character placement
 
     int *turn;
-    pthread_mutex_t *mutex;
-    pthread_mutex_t *mutex2;
+    pthread_mutex_t *printMutex;
+    pthread_mutex_t *dataMutex;
     pthread_cond_t *condition;
 };
 
 void * charArt(void *arg) { // thread function, based off of Dr. Rincons threading practices
-    lines imageLine = (*(lines *)arg);
+    lines imageLine = (*(lines *)arg); // fill Data for the thread to get ready for encoding algorithm
     std::vector<std::pair<char, std::vector<std::pair<int, int> > > > ranges = imageLine.ranges;
     int headPos[2] = {imageLine.headPos[0], imageLine.headPos[1]};
     std::vector<int> dataPos = imageLine.dataPos;
     int index = imageLine.index;
     char** outputMatrix = imageLine.outputMatrix;
-    pthread_mutex_unlock(imageLine.mutex2);
+    pthread_mutex_unlock(imageLine.dataMutex);
  
-    for (int i = headPos[0]; i < headPos[1]; i++) { // loops through the range
-         int data = dataPos[i];
-         for (int j = 0; j < ranges.size(); j++) {
-             char character = ranges[j].first;
-             const std::vector<std::pair<int, int> >& inner_ranges = ranges[j].second;
-             for (int k = 0; k < inner_ranges.size(); k++) {
-                 int start = inner_ranges[k].first; // gets the ranges from the nested vector pair
-                 int end = inner_ranges[k].second;
-                 if (data >= start && data <= end) { // checks to see if data falls in range if true adds char to the matrix
-                     outputMatrix[index][data] = character;
-                     break;
-                 }
-                 
-             }
-         }
+    for (int i = headPos[0]; i < headPos[1]; i++) { // loops through the range, algorithm for encoding 
+        int data = dataPos[i];
+        for (int j = 0; j < ranges.size(); j++) {
+            char character = ranges[j].first;
+            const std::vector<std::pair<int, int> >& inner_ranges = ranges[j].second;
+            for (int k = 0; k < inner_ranges.size(); k++) {
+                int start = inner_ranges[k].first; // gets the ranges from the nested vector pair
+                int end = inner_ranges[k].second;
+                if (data >= start && data <= end) { // checks to see if data falls in range if true adds char to the matrix
+                    outputMatrix[index][data] = character;
+                    break;
+                } 
+            }
+        }
     }
     
     
-    pthread_mutex_lock(imageLine.mutex);
+    pthread_mutex_lock(imageLine.printMutex); // critical section for telling all threads to sleep when it is not their turn
     while (*imageLine.turn != imageLine.index) {
-        pthread_cond_wait(imageLine.condition, imageLine.mutex);
+        pthread_cond_wait(imageLine.condition, imageLine.printMutex);
     }
-    pthread_mutex_unlock(imageLine.mutex);
+    pthread_mutex_unlock(imageLine.printMutex);
     
-    std::cout<< outputMatrix[index] << std::endl;
+    std::cout<< outputMatrix[index] << std::endl; // print the correct row via the index
     
-    pthread_mutex_lock(imageLine.mutex);
+    pthread_mutex_lock(imageLine.printMutex); // critical section to increment turn and wake up other threads for their turn
     (*imageLine.turn)+=1;
     pthread_cond_broadcast(imageLine.condition);
-    pthread_mutex_unlock(imageLine.mutex);
+    pthread_mutex_unlock(imageLine.printMutex);
 
     return NULL;
  }
 
 int main() {
-    pthread_mutex_t mutex;
-    pthread_mutex_t mutex2;
+    pthread_mutex_t printMutex; // initalize pthread mutexes and condition
+    pthread_mutex_t dataMutex;
     pthread_cond_t condition = PTHREAD_COND_INITIALIZER;
-    pthread_mutex_init(&mutex, NULL);
-    pthread_mutex_init(&mutex2, NULL);
+    pthread_mutex_init(&printMutex, NULL);
+    pthread_mutex_init(&dataMutex, NULL);
     static int turn = 0;
 
     int col, row; // reading matrix size from first line
@@ -121,20 +120,18 @@ int main() {
     pthread_t *tid = new pthread_t[row]; // dynamic array of pthread_t of size of the image height (rows), based off of Dr. Rincon's threading practices
     lines imageLine;
     imageLine.turn = &turn;
-    imageLine.mutex = &mutex;
-    imageLine.mutex2 = &mutex2;
+    imageLine.printMutex = &printMutex;
+    imageLine.dataMutex = &dataMutex;
     imageLine.condition = &condition;
     for (int i = 0; i < row; i++) { // for loop that iterates through the lines in the image (amount of rows)
-        // lock mutex in here and initiliaze input in here
-        pthread_mutex_lock(&mutex2);
+        pthread_mutex_lock(&dataMutex);  // lock muex in here and initiliaze input in here
         imageLine.ranges = ranges; // put ranges in each member
         imageLine.headPos[0] = headPos[i]; // filling in head pos
-        if (i == row - 1) {imageLine.headPos[1]= dataPos.size();} // if that checks if last section, if it is set end to size of data pos
-        else {imageLine.headPos[1] = headPos[i+1];}
+        imageLine.headPos[1] = (i == row - 1) ? dataPos.size() : headPos[i+1];
         imageLine.dataPos = dataPos; // set to dataPosition
         imageLine.index = i;
         imageLine.outputMatrix = outputMatrix;
-        if(pthread_create(&tid[i],nullptr,charArt,(void *) &imageLine)) {
+        if(pthread_create(&tid[i],nullptr,charArt,(void *) &imageLine)) { // create threads based off the imageLine
 			std::cerr << "Error creating thread" << std::endl;
 			return 1;
 		}
@@ -147,7 +144,7 @@ int main() {
     for (int r = 0; r < row; ++r) { // deallocating memory
         delete[] outputMatrix[r];
     }
-    delete[] outputMatrix;
+    delete[] outputMatrix; // remove
     delete[] tid;
 
     return 0;
