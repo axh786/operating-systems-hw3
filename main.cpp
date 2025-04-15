@@ -20,7 +20,7 @@ struct lines { // defining lines struct from data given by input
     int index;
     char** outputMatrix; // make changes to matrix when done with figuring out character placement
 
-    int *turn;
+    int *turn; // pthread variables based off of Dr. Rincons examples on canvas
     pthread_mutex_t *printMutex;
     pthread_mutex_t *dataMutex;
     pthread_cond_t *condition;
@@ -51,7 +51,7 @@ void * charArt(void *arg) { // thread function, based off of Dr. Rincons threadi
         }
     }
     
-    
+    // the following critical sections are based off of Dr. Rincons templates on canvas
     pthread_mutex_lock(imageLine.printMutex); // critical section for telling all threads to sleep when it is not their turn
     while (*imageLine.turn != imageLine.index) {
         pthread_cond_wait(imageLine.condition, imageLine.printMutex);
